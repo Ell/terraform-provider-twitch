@@ -2,8 +2,11 @@ package provider
 
 import (
 	"context"
+
+	"github.com/ell/terraform-provider-twitch/internal/helix"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -24,7 +27,8 @@ type TwitchProvider struct {
 
 // TwitchProviderModel describes the provider data model.
 type TwitchProviderModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
+	ClientId    types.String `tfsdk:"client_id"`
+	AccessToken types.String `tfsdk:"access_token"`
 }
 
 func (p *TwitchProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -38,9 +42,11 @@ func (p *TwitchProvider) Schema(ctx context.Context, req provider.SchemaRequest,
 			"client_id": schema.StringAttribute{
 				MarkdownDescription: "Twitch client id",
 				Required:            true,
+				Sensitive:           true,
 			},
-			"app_token": schema.StringAttribute{
-				MarkdownDescription: "Twitch app token",
+			"access_token": schema.StringAttribute{
+				MarkdownDescription: "Twitch access token",
+				Sensitive:           true,
 				Required:            true,
 			},
 		},
@@ -48,29 +54,44 @@ func (p *TwitchProvider) Schema(ctx context.Context, req provider.SchemaRequest,
 }
 
 func (p *TwitchProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	var data TwitchProviderModel
+	var config TwitchProviderModel
 
-	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	diags := req.Config.Get(ctx, &config)
+
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if config.ClientId.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("client_id"), "Unknown client_id", "client_id is required")
+	}
+
+	if config.AccessToken.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("access_token"), "Unknown access_token", "access_token is required")
+	}
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
+	twitchClient := helix.NewHelixClient(config.ClientId.ValueString(), config.AccessToken.ValueString())
 
-	// Example client configuration for data sources and resources
-	// client := http.DefaultClient
-	// resp.DataSourceData = client
-	// resp.ResourceData = client
+	resp.DataSourceData = twitchClient
+	resp.ResourceData = twitchClient
 }
 
 func (p *TwitchProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return []func() resource.Resource{
+		NewChannelResource,
+		NewChannelRewardResource,
+	}
 }
 
 func (p *TwitchProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+	return []func() datasource.DataSource{
+		NewGameDataSource,
+	}
 }
 
 func (p *TwitchProvider) Functions(ctx context.Context) []func() function.Function {
